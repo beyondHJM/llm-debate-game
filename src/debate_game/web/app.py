@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from debate_game import __version__
 from debate_game.config import AgentConfig
 from debate_game.domain import Role
 from debate_game.web.sessions import (
@@ -56,7 +57,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="LLM Debate Game",
-        version="0.2.0",
+        version=__version__,
         docs_url="/api/docs",
         redoc_url=None,
     )

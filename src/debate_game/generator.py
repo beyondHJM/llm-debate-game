@@ -59,6 +59,12 @@ class StreamingSpeechGenerator:
                 for event in client.stream_chat(messages):
                     self._cancellation.raise_if_cancelled()
                     if event.kind is StreamEventKind.REASONING:
+                        self._emit(
+                            EventKind.REASONING_DELTA,
+                            role,
+                            round_number,
+                            text=event.text,
+                        )
                         continue
                     if event.kind is StreamEventKind.USAGE and event.usage is not None:
                         usage = event.usage

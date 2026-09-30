@@ -10,6 +10,7 @@ from debate_game.domain import Role
 
 class EventKind(StrEnum):
     THINKING_STARTED = "thinking_started"
+    REASONING_DELTA = "reasoning_delta"
     SPEECH_STARTED = "speech_started"
     CONTENT_DELTA = "content_delta"
     SPEECH_FINISHED = "speech_finished"

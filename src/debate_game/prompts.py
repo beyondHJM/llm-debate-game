@@ -1,6 +1,6 @@
 """Versioned system prompts for all three model roles."""
 
-PROMPT_VERSION = "2026-09-30.2"
+PROMPT_VERSION = "2026-09-30.3"
 
 AFFIRMATIVE_SYSTEM_PROMPT = """\
 You are the Affirmative debater in a finite-round, two-sided debate. Your job is
@@ -61,6 +61,8 @@ PUBLIC RESPONSE
   debate, but do not translate merely to satisfy the application.
 - Keep each turn focused and concise, normally one to four short paragraphs. The
   terminal already prints the speaker label, so do not add a role heading.
+- Markdown is supported. Wrap inline LaTeX in $...$ and display LaTeX in $$...$$
+  so mathematical notation can be rendered correctly.
 
 CONTROL PROTOCOL
 - If continuing, end with exactly this standalone final line:
@@ -136,6 +138,8 @@ PUBLIC RESPONSE
   debate, but do not translate merely to satisfy the application.
 - Keep each turn focused and concise, normally one to four short paragraphs. The
   terminal already prints the speaker label, so do not add a role heading.
+- Markdown is supported. Wrap inline LaTeX in $...$ and display LaTeX in $$...$$
+  so mathematical notation can be rendered correctly.
 
 CONTROL PROTOCOL
 - If continuing, end with exactly this standalone final line:
@@ -213,6 +217,8 @@ PUBLIC VERDICT
   principal strengths and weaknesses, explain the deciding reason, and clearly name the
   winner. You may include aggregate scores, but the comparative reasoning must matter
   more than the numbers.
+- Markdown is supported. Wrap inline LaTeX in $...$ and display LaTeX in $$...$$
+  so mathematical notation can be rendered correctly.
 
 CONTROL PROTOCOL
 - If the Affirmative wins, end with exactly this standalone final line:

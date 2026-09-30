@@ -82,15 +82,27 @@
         <div class="avatar" aria-hidden="true"></div>
         <div class="bubble-wrap">
           <div class="speaker-line">
-            <strong class="speaker"></strong>
-            <span class="round-label"></span>
+            <div class="speaker-info">
+              <strong class="speaker"></strong>
+              <span class="round-label"></span>
+            </div>
+            <button
+              class="reasoning-toggle"
+              type="button"
+              aria-expanded="false"
+              disabled
+            >思考中…</button>
           </div>
           <div class="bubble">
             <div class="thinking">
               <span class="thinking-dots"><i></i><i></i><i></i></span>
               <span class="thinking-label">思考中…</span>
             </div>
-            <div class="speech"></div>
+            <div class="reasoning-panel hidden">
+              <div class="reasoning-heading">模型思考</div>
+              <div class="reasoning-content markdown-body"></div>
+            </div>
+            <div class="speech markdown-body"></div>
           </div>
           <div class="turn-meta"></div>
         </div>

@@ -13,12 +13,14 @@ from debate_game.config import AgentConfig
 from debate_game.domain import DebateOutcome, Role
 from debate_game.engine import DebateEngine
 from debate_game.errors import DebateCancelled, DebateError
-from debate_game.events import DebateEvent, EventSink
+from debate_game.events import DebateEvent, EventKind, EventSink
 from debate_game.generator import StreamingSpeechGenerator
+from debate_game.markdown import create_markdown_renderer
 from debate_game.transcript import JsonlRecorder
 
 TERMINAL_STATUSES = frozenset({"finished", "failed", "cancelled"})
 ACTIVE_STATUSES = frozenset({"pending", "running", "cancelling"})
+MARKDOWN_RENDER_INTERVAL_SECONDS = 0.08
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,9 +149,47 @@ class DebateSession:
 class SessionEventSink(EventSink):
     def __init__(self, session: DebateSession) -> None:
         self._session = session
+        self._markdown = create_markdown_renderer()
+        self._buffers: dict[tuple[Role, int | None, str], list[str]] = {}
+        self._last_rendered_at: dict[tuple[Role, int | None, str], float] = {}
 
     def emit(self, event: DebateEvent) -> None:
-        self._session.publish(event.kind.value, **event.as_dict())
+        payload = event.as_dict()
+        speech_key = (event.role, event.round_number, "speech")
+        reasoning_key = (event.role, event.round_number, "reasoning")
+
+        if event.kind is EventKind.THINKING_STARTED:
+            self._buffers[speech_key] = []
+            self._buffers[reasoning_key] = []
+            self._last_rendered_at.pop(speech_key, None)
+            self._last_rendered_at.pop(reasoning_key, None)
+        elif event.kind is EventKind.REASONING_DELTA:
+            self._append_markdown(reasoning_key, str(event.data.get("text", "")), payload)
+        elif event.kind is EventKind.CONTENT_DELTA:
+            self._append_markdown(speech_key, str(event.data.get("text", "")), payload)
+        elif event.kind is EventKind.SPEECH_STARTED:
+            reasoning = "".join(self._buffers.get(reasoning_key, ()))
+            if reasoning:
+                payload["reasoning_html"] = self._markdown.render(reasoning)
+        elif event.kind is EventKind.SPEECH_FINISHED:
+            speech = "".join(self._buffers.get(speech_key, ()))
+            payload["html"] = self._markdown.render(speech)
+
+        self._session.publish(event.kind.value, **payload)
+
+    def _append_markdown(
+        self,
+        key: tuple[Role, int | None, str],
+        text: str,
+        payload: dict[str, Any],
+    ) -> None:
+        parts = self._buffers.setdefault(key, [])
+        parts.append(text)
+        now = time.monotonic()
+        last_rendered = self._last_rendered_at.get(key)
+        if last_rendered is None or now - last_rendered >= MARKDOWN_RENDER_INTERVAL_SECONDS:
+            payload["html"] = self._markdown.render("".join(parts))
+            self._last_rendered_at[key] = now
 
 
 class SessionCapacityError(Exception):

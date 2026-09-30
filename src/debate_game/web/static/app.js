@@ -22,9 +22,11 @@ const roleNames = {
   judge: "裁判 · Judge",
 };
 const roleInitials = { pro: "正", con: "反", judge: "裁" };
+const autoScrollThreshold = 120;
 const eventNames = [
   "debate_started",
   "thinking_started",
+  "reasoning_delta",
   "speech_started",
   "content_delta",
   "speech_finished",
@@ -67,8 +69,13 @@ function bubbleKey(role, round) {
   return `${role}:${round ?? "final"}`;
 }
 
-function scheduleScroll(element) {
-  if (scrollQueued) return;
+function isNearPageBottom() {
+  const root = document.scrollingElement || document.documentElement;
+  return root.scrollHeight - root.scrollTop - root.clientHeight <= autoScrollThreshold;
+}
+
+function scheduleScroll(element, shouldFollow = true) {
+  if (!shouldFollow || scrollQueued) return;
   scrollQueued = true;
   requestAnimationFrame(() => {
     element.scrollIntoView({ behavior: "auto", block: "end" });
@@ -76,7 +83,7 @@ function scheduleScroll(element) {
   });
 }
 
-function ensureBubble(role, round) {
+function ensureBubble(role, round, shouldFollow = isNearPageBottom()) {
   const key = bubbleKey(role, round);
   if (bubbles.has(key)) return bubbles.get(key);
 
@@ -89,11 +96,27 @@ function ensureBubble(role, round) {
   turn.querySelector(".speaker").textContent = roleNames[role] ?? role;
   turn.querySelector(".round-label").textContent =
     role === "judge" ? "终局裁决" : `第 ${round} 轮`;
+  const reasoningToggle = turn.querySelector(".reasoning-toggle");
+  const reasoningPanel = turn.querySelector(".reasoning-panel");
+  reasoningToggle.addEventListener("click", () => {
+    if (reasoningToggle.disabled) return;
+    const opening = reasoningPanel.classList.contains("hidden");
+    reasoningPanel.classList.toggle("hidden", !opening);
+    reasoningToggle.setAttribute("aria-expanded", String(opening));
+    reasoningToggle.textContent = opening ? "收起思考" : "查看思考";
+  });
   timeline.append(fragment);
   const inserted = timeline.lastElementChild;
   bubbles.set(key, inserted);
-  inserted.scrollIntoView({ behavior: "smooth", block: "end" });
+  scheduleScroll(inserted, shouldFollow);
   return inserted;
+}
+
+function makeReasoningAvailable(turn) {
+  const toggle = turn.querySelector(".reasoning-toggle");
+  const panel = turn.querySelector(".reasoning-panel");
+  toggle.disabled = false;
+  toggle.textContent = panel.classList.contains("hidden") ? "查看思考" : "收起思考";
 }
 
 function finishTerminal(state, statusText) {
@@ -118,34 +141,66 @@ function handleEvent(name, data) {
   if (name === "thinking_started") {
     const turn = ensureBubble(data.role, data.round);
     turn.classList.add("thinking-active");
+    const reasoningToggle = turn.querySelector(".reasoning-toggle");
+    reasoningToggle.disabled = true;
+    reasoningToggle.textContent = "思考中…";
+    reasoningToggle.setAttribute("aria-expanded", "false");
+    turn.querySelector(".reasoning-panel").classList.add("hidden");
+    turn.querySelector(".reasoning-content").replaceChildren();
     turn.querySelector(".thinking-label").textContent =
       data.role === "judge" ? "正在评议全部交锋…" : "正在组织论点…";
     return;
   }
 
+  if (name === "reasoning_delta") {
+    const shouldFollow = isNearPageBottom();
+    const turn = ensureBubble(data.role, data.round, shouldFollow);
+    makeReasoningAvailable(turn);
+    if (data.html) {
+      turn.querySelector(".reasoning-content").innerHTML = data.html;
+      scheduleScroll(turn, shouldFollow);
+    }
+    return;
+  }
+
   if (name === "speech_started") {
-    const turn = ensureBubble(data.role, data.round);
+    const shouldFollow = isNearPageBottom();
+    const turn = ensureBubble(data.role, data.round, shouldFollow);
     turn.classList.remove("thinking-active");
     turn.classList.add("speaking");
     turn.querySelector(".thinking").classList.add("hidden");
+    if (data.reasoning_html) {
+      makeReasoningAvailable(turn);
+      turn.querySelector(".reasoning-content").innerHTML = data.reasoning_html;
+    } else {
+      turn.querySelector(".reasoning-toggle").disabled = true;
+      turn.querySelector(".reasoning-toggle").textContent = "无思考";
+    }
     turn.querySelector(".turn-meta").textContent =
       `思考 ${Number(data.thinking_seconds).toFixed(1)} 秒`;
+    scheduleScroll(turn, shouldFollow);
     return;
   }
 
   if (name === "content_delta") {
-    const turn = ensureBubble(data.role, data.round);
-    turn.querySelector(".speech").append(document.createTextNode(data.text));
-    scheduleScroll(turn);
+    const shouldFollow = isNearPageBottom();
+    const turn = ensureBubble(data.role, data.round, shouldFollow);
+    if (data.html) {
+      turn.querySelector(".speech").innerHTML = data.html;
+      scheduleScroll(turn, shouldFollow);
+    }
     return;
   }
 
   if (name === "speech_finished") {
-    const turn = ensureBubble(data.role, data.round);
+    const shouldFollow = isNearPageBottom();
+    const turn = ensureBubble(data.role, data.round, shouldFollow);
+    if (data.html) turn.querySelector(".speech").innerHTML = data.html;
     turn.classList.remove("speaking", "thinking-active");
     turn.classList.add("complete");
     turn.querySelector(".turn-meta").textContent =
       `完成于 ${Number(data.elapsed_seconds).toFixed(1)} 秒`;
+    scheduleScroll(turn, shouldFollow);
     return;
   }
 
@@ -164,6 +219,7 @@ function handleEvent(name, data) {
   }
 
   if (name === "debate_finished") {
+    const shouldFollow = isNearPageBottom();
     resultCard.classList.remove("hidden");
     const winner = data.winner === "pro" ? "正方获胜" : "反方获胜";
     const reason = data.reason === "concession" ? "对方主动认输" : "裁判终局裁决";
@@ -171,7 +227,7 @@ function handleEvent(name, data) {
     resultMeta.textContent =
       `${reason} · ${data.completed_rounds} 个完整轮回 · ` +
       `${Number(data.elapsed_seconds).toFixed(1)} 秒`;
-    resultCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    scheduleScroll(resultCard, shouldFollow);
     finishTerminal("done", "辩论已结束");
     return;
   }

@@ -5,8 +5,9 @@ import httpx
 
 from debate_game.config import AgentConfig
 from debate_game.domain import Role
+from debate_game.events import DebateEvent, EventKind
 from debate_game.web.app import create_app
-from debate_game.web.sessions import DebateSession
+from debate_game.web.sessions import DebateSession, SessionEventSink
 
 
 def configs() -> dict[Role, AgentConfig]:
@@ -34,6 +35,8 @@ def test_health_and_index_are_served(tmp_path: Path) -> None:
     assert health.json() == {"status": "ok"}
     assert index.status_code == 200
     assert "AI 辩论场" in index.text
+    assert "reasoning-toggle" in index.text
+    assert "markdown-body" in index.text
 
 
 def test_blank_motion_is_rejected_without_starting_session(tmp_path: Path) -> None:
@@ -80,3 +83,31 @@ def test_terminal_event_and_status_are_observed_together() -> None:
     assert terminal is True
     assert events[-1].name == "debate_failed"
     assert events[-1].data["message"] == "bad response"
+
+
+def test_web_sink_renders_reasoning_and_speech_markdown_safely() -> None:
+    session = DebateSession("motion", 5)
+    sink = SessionEventSink(session)
+    sink.emit(DebateEvent(EventKind.THINKING_STARTED, Role.PRO, 1))
+    sink.emit(
+        DebateEvent(
+            EventKind.REASONING_DELTA,
+            Role.PRO,
+            1,
+            {"text": "# Plan\n\n<script>alert(1)</script>"},
+        )
+    )
+    sink.emit(
+        DebateEvent(EventKind.CONTENT_DELTA, Role.PRO, 1, {"text": "**Claim**"})
+    )
+    sink.emit(DebateEvent(EventKind.SPEECH_FINISHED, Role.PRO, 1))
+
+    events, _ = session.wait_after(0, 0)
+    reasoning = next(event for event in events if event.name == "reasoning_delta")
+    content = next(event for event in events if event.name == "content_delta")
+    finished = next(event for event in events if event.name == "speech_finished")
+
+    assert "<h1>Plan</h1>" in reasoning.data["html"]
+    assert "<script>" not in reasoning.data["html"]
+    assert "<strong>Claim</strong>" in content.data["html"]
+    assert finished.data["html"] == content.data["html"]
