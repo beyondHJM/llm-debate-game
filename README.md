@@ -49,76 +49,68 @@ cd llm-debate-game
 uv sync --dev
 ```
 
-默认连接 `http://127.0.0.1:18080/v1`，模型名为 `Qwen3-14B-f16.gguf`。模型服务准备好后运行：
+复制三个角色的配置模板，并分别填写模型服务信息：
 
-```bash
-uv run debate
+```powershell
+Copy-Item configs/affirmative.example.json configs/affirmative.json
+Copy-Item configs/negative.example.json configs/negative.json
+Copy-Item configs/judge.example.json configs/judge.json
+```
+
+Windows 下启动只需要：
+
+```powershell
+.\debate.cmd
 ```
 
 程序会提示输入辩题。也可以通过参数直接指定：
 
-```bash
-uv run debate --topic "人工智能的发展对大学教育利大于弊"
+```powershell
+.\debate.cmd --topic "人工智能的发展对大学教育利大于弊"
 ```
 
 使用一轮上限快速验证完整的“正方 → 反方 → 裁判”流程：
 
-```bash
-uv run debate \
-  --topic "Open-source software is better for innovation" \
-  --max-rounds 1
-```
-
-查看全部参数：
-
-```bash
-uv run debate --help
+```powershell
+.\debate.cmd --topic "Open-source software is better for innovation" --max-rounds 1
 ```
 
 ## 配置
 
-复制配置模板：
+默认读取三个互相独立的 JSON 文件：
 
-```bash
-cp .env.example .env
+```text
+configs/affirmative.json  # 正方
+configs/negative.json     # 反方
+configs/judge.json        # 裁判
 ```
 
-### 共享配置
+每个文件使用相同结构，可以连接不同服务和模型：
 
-| 环境变量 | 默认值 | 含义 |
-| --- | --- | --- |
-| `DEBATE_API_BASE` | `http://127.0.0.1:18080/v1` | OpenAI 兼容 API 地址 |
-| `DEBATE_MODEL` | `Qwen3-14B-f16.gguf` | 默认模型名 |
-| `DEBATE_API_KEY` | 空 | 可选 API Key |
-| `DEBATE_MAX_ROUNDS` | `5` | 最大完整轮回数 |
-| `DEBATE_TEMPERATURE` | `0.7` | 正反方采样温度 |
-| `DEBATE_JUDGE_TEMPERATURE` | `0.2` | 裁判采样温度 |
-| `DEBATE_CONNECT_TIMEOUT` | `10` | 连接超时，单位秒 |
-| `DEBATE_READ_TIMEOUT` | `180` | 单次流式读取超时，单位秒 |
-| `DEBATE_RETRIES` | `1` | 正式内容开始输出前的重试次数 |
-| `DEBATE_RUNS_DIR` | `runs` | 对局记录目录 |
-| `DEBATE_MAX_TOKENS` | 空 | 可选的辩手输出上限；默认不发送 |
-| `DEBATE_JUDGE_MAX_TOKENS` | 空 | 可选的裁判输出上限；默认不发送 |
-
-### 为不同角色使用不同模型
-
-以下角色级配置会覆盖共享值：
-
-```dotenv
-DEBATE_PRO_API_BASE=https://example.com/v1
-DEBATE_PRO_MODEL=affirmative-model
-DEBATE_PRO_API_KEY=...
-
-DEBATE_CON_API_BASE=https://example.com/v1
-DEBATE_CON_MODEL=negative-model
-DEBATE_CON_API_KEY=...
-
-DEBATE_JUDGE_API_BASE=https://example.com/v1
-DEBATE_JUDGE_MODEL=judge-model
-DEBATE_JUDGE_API_KEY=...
+```json
+{
+  "api_base": "https://api.deepseek.com",
+  "api_key": "replace-with-your-api-key",
+  "model": "deepseek-flash",
+  "temperature": 0.7,
+  "connect_timeout": 10,
+  "read_timeout": 180,
+  "retries": 1
+}
 ```
 
-未填写的角色级字段会自动继承共享配置。
+`max_tokens` 是可选字段，默认不发送，避免模型在最终控制标记前被截断。三个真实配置文件已被 `.gitignore` 排除，不会随正常的 `git add .` 提交。
+
+如需临时使用其他配置文件，可以传入：
+
+```powershell
+.\debate.cmd `
+  --pro-config configs/pro-local.json `
+  --con-config configs/con-local.json `
+  --judge-config configs/judge-local.json
+```
+
+Linux/macOS 下可以使用 `uv run debate`，参数与 `debate.cmd` 相同。
 
 ## 辩论与裁决协议
 
@@ -160,7 +152,7 @@ DEBATE_JUDGE_API_KEY=...
 ```text
 src/debate_game/
 ├── cli.py          # CLI 入口与错误处理
-├── config.py       # 环境变量和三角色配置
+├── config.py       # 三角色 JSON 配置加载与校验
 ├── client.py       # OpenAI 兼容 SSE 客户端
 ├── prompts.py      # 正方、反方、裁判系统提示词
 ├── protocol.py     # 控制标记的增量解析

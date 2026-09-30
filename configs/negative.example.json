@@ -1,0 +1,9 @@
+{
+  "api_base": "https://api.deepseek.com",
+  "api_key": "replace-with-your-api-key",
+  "model": "deepseek-flash",
+  "temperature": 0.7,
+  "connect_timeout": 10,
+  "read_timeout": 180,
+  "retries": 1
+}

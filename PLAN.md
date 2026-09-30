@@ -4,14 +4,14 @@
 
 在 `/root/workspace/debate` 建设一个可维护、可测试、可发布的终端应用。用户在终端输入任意语言的辩题后，正方先发言，反方随后发言，双方严格交替；正方、反方和裁判都通过 OpenAI 兼容 API 调用大模型。辩论最多进行 5 个完整轮回：任一方可以提前认输；若到达轮数上限仍无人认输，则由裁判阅读完整记录并强制判定胜方。用户也可以随时按 `Ctrl+C` 安全结束。
 
-本期只做单机终端版，不引入 Web UI、多人房间或联网事实检索。三个角色默认复用当前服务，但必须允许独立配置各自的服务地址、模型和 API Key。默认连接：
+本期只做单机终端版，不引入 Web UI、多人房间或联网事实检索。正方、反方和裁判分别使用独立 JSON 文件配置服务地址、模型和 API Key。示例默认连接：
 
 - API Base URL：`http://127.0.0.1:18080/v1`
 - 模型：`Qwen3-14B-f16.gguf`
 - 接口：`POST /chat/completions`
 - 传输：OpenAI 兼容 SSE，`stream=true`
 
-以上配置作为三种角色的共同回退值，必须能通过角色级环境变量和 CLI 参数覆盖，代码中不得散落硬编码。
+实际运行默认读取 `configs/affirmative.json`、`configs/negative.json` 和 `configs/judge.json`；CLI 参数可以覆盖配置文件路径，代码中不得散落连接信息。
 
 ## 2. 已确定的交互规则
 
@@ -21,7 +21,7 @@
 4. 请求发出后立即显示 `正方思考中...` 或 `反方思考中...`，附旋转指示和耗时。服务流中出现 `reasoning_content` 时继续更新思考状态；收到第一段 `content` 后切换为 `正方正式发言` 或 `反方正式发言` 并逐字输出。
 5. 默认不原样展示模型内部长思维链，避免内部草稿、重复推演与正式辩词混杂。用户能清楚看到“请求中 → 思考中 → 正式发言”的阶段和耗时。
 6. 双方每次输出末尾必须带一个程序控制标记：`<DEBATE_CONTINUE/>` 或 `<DEBATE_CONCEDE/>`。渲染层缓存输出尾部、解析并隐藏控制标记；仅把正式辩词展示给用户。
-7. 一个“轮回”定义为正方一次发言加反方一次发言。默认最大轮数为 5，允许用 `--max-rounds` 或环境变量改成其他正整数，但不提供无限模式。
+7. 一个“轮回”定义为正方一次发言加反方一次发言。默认最大轮数为 5，允许用 `--max-rounds` 改成其他正整数，但不提供无限模式。
 8. 检测到一方认输后立即结束，不再调用另一方或裁判，并展示认输方、获胜方、轮数及总耗时。
 9. 若第 5 轮反方发言完成后双方均未认输，程序只调用一次裁判。裁判读取辩题和全部十次正式发言，必须在正方、反方之间选出唯一胜者，不允许平局。裁判结论和核心理由也以流式方式展示。
 10. 网络中断、SSE 格式错误或模型服务异常不能产生“半回合后悄悄重试”。若尚未输出正式内容，可以指数退避重试；若已经向用户输出了部分辩词，则保留现场并提示用户重试本回合或退出，防止重复发言破坏状态。
@@ -233,13 +233,16 @@ CONTROL PROTOCOL
 debate/
 ├── pyproject.toml
 ├── README.md
-├── .env.example
+├── configs/
+│   ├── affirmative.example.json
+│   ├── negative.example.json
+│   └── judge.example.json
 ├── .gitignore
 ├── src/debate_game/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── cli.py             # 参数、交互输入、退出码
-│   ├── config.py          # 环境变量与配置校验
+│   ├── config.py          # 三角色 JSON 配置加载与校验
 │   ├── domain.py          # Side、Turn、DebateState 等领域模型
 │   ├── prompts.py         # 正方、反方、裁判的版本化系统提示词
 │   ├── client.py          # OpenAI 兼容 SSE 客户端
@@ -255,7 +258,7 @@ debate/
     └── fixtures/
 ```
 
-技术选型：Python 3.11+；`httpx` 负责异步 HTTP/SSE；`Rich` 负责终端状态和颜色；`Typer` 负责 CLI；`pydantic-settings` 负责三角色配置；`pytest`、`pytest-asyncio`、`respx`、`ruff`、`mypy` 负责质量保障。所有运行依赖固定版本范围并生成锁文件。
+技术选型：Python 3.11+；`httpx` 负责 HTTP/SSE；`Rich` 负责终端状态和颜色；`Typer` 负责 CLI；`pydantic` 负责三角色 JSON 配置校验；`pytest`、`ruff`、`mypy` 负责质量保障。所有运行依赖固定版本范围并生成锁文件。
 
 ## 7. 核心设计
 
@@ -275,7 +278,7 @@ debate/
 
 ### 7.4 三角色 API 配置与可运维性
 
-共同默认配置为 `DEBATE_API_BASE`、`DEBATE_MODEL`、`DEBATE_API_KEY`；角色级配置 `DEBATE_PRO_*`、`DEBATE_CON_*`、`DEBATE_JUDGE_*` 可以分别覆盖 API Base、模型和 API Key。三者都走同一个 OpenAI 兼容客户端抽象，但拥有独立连接池、超时和温度。默认不发送 `max_tokens`；仅在用户显式设置可选安全上限时传递该字段。另支持最大轮数（默认且推荐为 5）、上下文上限、重试次数、记录目录和日志级别。任何 API Key 都不得写入日志或对局记录。
+正方、反方和裁判分别从 `configs/affirmative.json`、`configs/negative.json`、`configs/judge.json` 读取 API Base、模型、API Key、温度、超时和重试设置。三者共用 OpenAI 兼容客户端抽象，但配置互不继承。默认不发送 `max_tokens`；仅在对应 JSON 显式设置可选安全上限时传递该字段。真实配置文件必须加入 `.gitignore`，仓库只提交不含密钥的 `.example.json`。任何 API Key 都不得写入日志或对局记录。
 
 正常终端只展示用户需要的辩论 UI；`--verbose` 把结构化诊断输出到 stderr。每局自动保存 JSONL，包括题目、回合序号、角色、正式发言、耗时、token 用量和结束原因，便于复盘，但不保存内部 reasoning 内容。
 

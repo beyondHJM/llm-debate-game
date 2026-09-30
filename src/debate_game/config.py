@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
-from debate_game.domain import Role
+from debate_game.errors import ConfigurationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,76 +20,59 @@ class AgentConfig:
     retries: int
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="DEBATE_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+class AgentConfigDocument(BaseModel):
+    """Validated representation of one role's JSON configuration."""
 
-    api_base: str = "http://127.0.0.1:18080/v1"
-    model: str = "Qwen3-14B-f16.gguf"
-    api_key: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
-    pro_api_base: str | None = None
-    pro_model: str | None = None
-    pro_api_key: str | None = None
-    con_api_base: str | None = None
-    con_model: str | None = None
-    con_api_key: str | None = None
-    judge_api_base: str | None = None
-    judge_model: str | None = None
-    judge_api_key: str | None = None
-
-    max_rounds: int = Field(default=5, ge=1, le=50)
+    api_base: str
+    model: str
+    api_key: SecretStr | None = None
     temperature: float = Field(default=0.7, ge=0, le=2)
-    judge_temperature: float = Field(default=0.2, ge=0, le=2)
     max_tokens: int | None = Field(default=None, ge=64)
-    judge_max_tokens: int | None = Field(default=None, ge=64)
     connect_timeout: float = Field(default=10.0, gt=0)
     read_timeout: float = Field(default=180.0, gt=0)
     retries: int = Field(default=1, ge=0, le=5)
-    runs_dir: Path = Path("runs")
 
-    @field_validator("api_base", "pro_api_base", "con_api_base", "judge_api_base")
+    @field_validator("api_base")
     @classmethod
-    def normalize_api_base(cls, value: str | None) -> str | None:
-        if value is None or not value.strip():
-            return None
-        return value.strip().rstrip("/")
+    def normalize_api_base(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        if not normalized:
+            raise ValueError("api_base must not be empty")
+        return normalized
 
-    @field_validator(
-        "api_key",
-        "pro_api_key",
-        "con_api_key",
-        "judge_api_key",
-        "pro_model",
-        "con_model",
-        "judge_model",
-        "max_tokens",
-        "judge_max_tokens",
-        mode="before",
-    )
+    @field_validator("model")
     @classmethod
-    def empty_string_is_none(cls, value: object) -> object:
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
+    def non_empty_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("model must not be empty")
+        return normalized
 
-    def for_role(self, role: Role) -> AgentConfig:
-        prefix = role.value
-        api_base = getattr(self, f"{prefix}_api_base") or self.api_base
-        model = getattr(self, f"{prefix}_model") or self.model
-        api_key = getattr(self, f"{prefix}_api_key") or self.api_key
-        is_judge = role is Role.JUDGE
+    def to_runtime(self) -> AgentConfig:
         return AgentConfig(
-            api_base=api_base.rstrip("/"),
-            model=model,
-            api_key=api_key,
-            temperature=self.judge_temperature if is_judge else self.temperature,
-            max_tokens=self.judge_max_tokens if is_judge else self.max_tokens,
+            api_base=self.api_base,
+            model=self.model,
+            api_key=self.api_key.get_secret_value() if self.api_key is not None else None,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
             connect_timeout=self.connect_timeout,
             read_timeout=self.read_timeout,
             retries=self.retries,
         )
+
+
+def load_agent_config(path: Path) -> AgentConfig:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ConfigurationError(f"找不到角色配置文件：{path}") from exc
+    except OSError as exc:
+        raise ConfigurationError(f"无法读取角色配置文件 {path}：{exc}") from exc
+
+    try:
+        document = AgentConfigDocument.model_validate_json(raw)
+    except ValidationError as exc:
+        raise ConfigurationError(f"角色配置文件格式无效 {path}：{exc}") from exc
+    return document.to_runtime()

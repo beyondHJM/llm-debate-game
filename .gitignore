@@ -1,5 +1,8 @@
 .venv/
 .env
+configs/affirmative.json
+configs/negative.json
+configs/judge.json
 __pycache__/
 *.py[cod]
 .pytest_cache/

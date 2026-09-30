@@ -5,14 +5,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from pydantic import ValidationError
 from rich.console import Console
 from rich.prompt import Prompt
 
-from debate_game.config import Settings
+from debate_game.config import load_agent_config
 from debate_game.domain import Role
 from debate_game.engine import DebateEngine
-from debate_game.errors import DebateError
+from debate_game.errors import ConfigurationError, DebateError
 from debate_game.generator import StreamingSpeechGenerator
 from debate_game.renderer import TerminalRenderer
 from debate_game.transcript import JsonlRecorder
@@ -40,25 +39,40 @@ def run(
         typer.Option("--topic", "-t", help="辩题；省略时在终端交互输入。"),
     ] = None,
     max_rounds: Annotated[
-        int | None,
+        int,
         typer.Option("--max-rounds", "-r", min=1, max=50, help="最大完整轮回数。"),
-    ] = None,
+    ] = 5,
     runs_dir: Annotated[
-        Path | None,
+        Path,
         typer.Option("--runs-dir", help="JSONL 对局记录目录。"),
-    ] = None,
+    ] = Path("runs"),
+    pro_config: Annotated[
+        Path,
+        typer.Option("--pro-config", help="正方 JSON 配置。"),
+    ] = Path("configs/affirmative.json"),
+    con_config: Annotated[
+        Path,
+        typer.Option("--con-config", help="反方 JSON 配置。"),
+    ] = Path("configs/negative.json"),
+    judge_config: Annotated[
+        Path,
+        typer.Option("--judge-config", help="裁判 JSON 配置。"),
+    ] = Path("configs/judge.json"),
 ) -> None:
     """Start a new debate."""
     console = Console()
     try:
-        settings = Settings()
-    except ValidationError as exc:
+        configs = {
+            Role.PRO: load_agent_config(pro_config),
+            Role.CON: load_agent_config(con_config),
+            Role.JUDGE: load_agent_config(judge_config),
+        }
+    except ConfigurationError as exc:
         console.print(f"[bold red]配置错误：[/bold red]{exc}")
         raise typer.Exit(2) from exc
 
-    effective_rounds = max_rounds or settings.max_rounds
     renderer = TerminalRenderer(console)
-    renderer.show_welcome(effective_rounds)
+    renderer.show_welcome(max_rounds)
     raw_motion = topic if topic is not None else Prompt.ask("请输入辩题")
     try:
         motion = _validate_motion(raw_motion)
@@ -66,10 +80,9 @@ def run(
         console.print(f"[bold red]输入错误：[/bold red]{exc.message}")
         raise typer.Exit(2) from exc
 
-    recorder = JsonlRecorder(runs_dir or settings.runs_dir, motion, effective_rounds)
-    configs = {role: settings.for_role(role) for role in Role}
+    recorder = JsonlRecorder(runs_dir, motion, max_rounds)
     generator = StreamingSpeechGenerator(configs, renderer)
-    engine = DebateEngine(generator, recorder, effective_rounds)
+    engine = DebateEngine(generator, recorder, max_rounds)
     started = time.monotonic()
     try:
         outcome = engine.run(motion)
