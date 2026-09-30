@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "debate-game"
+version = "0.1.0"
+description = "A finite-round, streaming, multi-agent terminal debate game"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hujianmin", email = "1830175462@qq.com" }]
+dependencies = [
+  "httpx>=0.27,<1",
+  "pydantic-settings>=2.6,<3",
+  "rich>=13.9,<15",
+  "typer>=0.15,<1",
+]
+
+[project.scripts]
+debate = "debate_game.cli:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.13,<2",
+  "pytest>=8.3,<9",
+  "ruff>=0.8,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/debate_game"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001"]  # Chinese terminal copy intentionally uses full-width punctuation.
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["debate_game"]
