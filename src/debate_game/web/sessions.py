@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from debate_game.cancellation import CancellationToken
+from debate_game.config import AgentConfig
+from debate_game.domain import DebateOutcome, Role
+from debate_game.engine import DebateEngine
+from debate_game.errors import DebateCancelled, DebateError
+from debate_game.events import DebateEvent, EventSink
+from debate_game.generator import StreamingSpeechGenerator
+from debate_game.transcript import JsonlRecorder
+
+TERMINAL_STATUSES = frozenset({"finished", "failed", "cancelled"})
+ACTIVE_STATUSES = frozenset({"pending", "running", "cancelling"})
+
+
+@dataclass(frozen=True, slots=True)
+class StoredEvent:
+    event_id: int
+    name: str
+    data: dict[str, Any]
+
+
+class DebateSession:
+    def __init__(self, motion: str, max_rounds: int) -> None:
+        self.id = uuid4().hex
+        self.motion = motion
+        self.max_rounds = max_rounds
+        self.cancellation = CancellationToken()
+        self.created_at = datetime.now(UTC)
+        self._updated_at = self.created_at
+        self._condition = threading.Condition()
+        self._events: list[StoredEvent] = []
+        self._status = "pending"
+        self._winner: str | None = None
+        self._record_path: str | None = None
+        self._error: str | None = None
+
+    @property
+    def status(self) -> str:
+        with self._condition:
+            return self._status
+
+    def publish(self, name: str, **data: Any) -> StoredEvent:
+        with self._condition:
+            return self._publish_locked(name, data)
+
+    def mark_running(self) -> None:
+        with self._condition:
+            self._status = "cancelling" if self.cancellation.is_cancelled else "running"
+            self._updated_at = datetime.now(UTC)
+
+    def complete(
+        self,
+        outcome: DebateOutcome,
+        elapsed_seconds: float,
+        record_path: Path,
+    ) -> None:
+        with self._condition:
+            self._status = "finished"
+            self._winner = outcome.winner.value
+            self._record_path = str(record_path)
+            self._updated_at = datetime.now(UTC)
+            self._publish_locked(
+                "debate_finished",
+                {
+                    "winner": outcome.winner.value,
+                    "reason": outcome.reason.value,
+                    "completed_rounds": outcome.completed_rounds,
+                    "elapsed_seconds": round(elapsed_seconds, 3),
+                    "record_path": str(record_path),
+                },
+            )
+
+    def fail(self, message: str, record_path: Path | None) -> None:
+        with self._condition:
+            self._status = "failed"
+            self._error = message
+            self._record_path = str(record_path) if record_path is not None else None
+            self._updated_at = datetime.now(UTC)
+            self._publish_locked(
+                "debate_failed",
+                {"message": message, "record_path": self._record_path},
+            )
+
+    def mark_cancelled(self, record_path: Path | None) -> None:
+        with self._condition:
+            self._status = "cancelled"
+            self._record_path = str(record_path) if record_path is not None else None
+            self._updated_at = datetime.now(UTC)
+            self._publish_locked(
+                "debate_cancelled",
+                {"record_path": self._record_path},
+            )
+
+    def request_cancel(self) -> bool:
+        with self._condition:
+            if self._status not in {"pending", "running"}:
+                return False
+            self._status = "cancelling"
+            self._updated_at = datetime.now(UTC)
+        self.cancellation.cancel()
+        self.publish("cancellation_requested")
+        return True
+
+    def wait_after(
+        self,
+        last_event_id: int,
+        timeout_seconds: float,
+    ) -> tuple[tuple[StoredEvent, ...], bool]:
+        with self._condition:
+            if len(self._events) <= last_event_id and self._status not in TERMINAL_STATUSES:
+                self._condition.wait(timeout_seconds)
+            events = tuple(self._events[last_event_id:])
+            return events, self._status in TERMINAL_STATUSES
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._condition:
+            return {
+                "id": self.id,
+                "motion": self.motion,
+                "max_rounds": self.max_rounds,
+                "status": self._status,
+                "winner": self._winner,
+                "record_path": self._record_path,
+                "error": self._error,
+                "created_at": self.created_at.isoformat(),
+                "updated_at": self._updated_at.isoformat(),
+                "last_event_id": len(self._events),
+            }
+
+    def _publish_locked(self, name: str, data: dict[str, Any]) -> StoredEvent:
+        event = StoredEvent(len(self._events) + 1, name, data)
+        self._events.append(event)
+        self._updated_at = datetime.now(UTC)
+        self._condition.notify_all()
+        return event
+
+
+class SessionEventSink(EventSink):
+    def __init__(self, session: DebateSession) -> None:
+        self._session = session
+
+    def emit(self, event: DebateEvent) -> None:
+        self._session.publish(event.kind.value, **event.as_dict())
+
+
+class SessionCapacityError(Exception):
+    """Raised when the configured concurrent debate limit is reached."""
+
+
+class DebateSessionManager:
+    def __init__(
+        self,
+        configs: dict[Role, AgentConfig],
+        runs_dir: Path,
+        max_concurrent: int = 4,
+        retention: timedelta = timedelta(hours=1),
+    ) -> None:
+        self._configs = configs
+        self._runs_dir = runs_dir
+        self._max_concurrent = max_concurrent
+        self._retention = retention
+        self._sessions: dict[str, DebateSession] = {}
+        self._lock = threading.Lock()
+
+    def create(self, motion: str, max_rounds: int) -> DebateSession:
+        with self._lock:
+            self._cleanup_locked()
+            active = sum(
+                session.status in ACTIVE_STATUSES for session in self._sessions.values()
+            )
+            if active >= self._max_concurrent:
+                raise SessionCapacityError("当前运行中的网页对局数量已达到上限")
+            session = DebateSession(motion, max_rounds)
+            self._sessions[session.id] = session
+
+        session.publish(
+            "debate_started",
+            debate_id=session.id,
+            motion=motion,
+            max_rounds=max_rounds,
+        )
+        threading.Thread(
+            target=self._run_session,
+            args=(session,),
+            name=f"debate-{session.id[:8]}",
+            daemon=True,
+        ).start()
+        return session
+
+    def get(self, session_id: str) -> DebateSession | None:
+        with self._lock:
+            return self._sessions.get(session_id)
+
+    def _run_session(self, session: DebateSession) -> None:
+        recorder: JsonlRecorder | None = None
+        started = time.monotonic()
+        try:
+            session.mark_running()
+            recorder = JsonlRecorder(
+                self._runs_dir,
+                session.motion,
+                session.max_rounds,
+            )
+            generator = StreamingSpeechGenerator(
+                self._configs,
+                SessionEventSink(session),
+                session.cancellation,
+            )
+            engine = DebateEngine(generator, recorder, session.max_rounds)
+            outcome = engine.run(session.motion)
+            session.complete(outcome, time.monotonic() - started, recorder.path)
+        except DebateCancelled:
+            if recorder is not None:
+                recorder.record_event("debate_cancelled")
+            session.mark_cancelled(recorder.path if recorder is not None else None)
+        except DebateError as exc:
+            if recorder is not None:
+                recorder.record_event(
+                    "debate_failed",
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                )
+            session.fail(str(exc), recorder.path if recorder is not None else None)
+        except Exception as exc:  # Defensive boundary for a background worker.
+            if recorder is not None:
+                recorder.record_event(
+                    "debate_failed",
+                    error_type=type(exc).__name__,
+                    message="网页对局发生内部错误",
+                )
+            session.fail("网页对局发生内部错误", recorder.path if recorder else None)
+
+    def _cleanup_locked(self) -> None:
+        cutoff = datetime.now(UTC) - self._retention
+        expired = [
+            session_id
+            for session_id, session in self._sessions.items()
+            if session.status in TERMINAL_STATUSES
+            and datetime.fromisoformat(session.snapshot()["updated_at"]) < cutoff
+        ]
+        for session_id in expired:
+            del self._sessions[session_id]

@@ -4,6 +4,7 @@ from rich.console import Console
 from rich.status import Status
 
 from debate_game.domain import DebateOutcome, EndReason, Role
+from debate_game.events import DebateEvent, EventKind
 
 
 class TerminalRenderer:
@@ -17,6 +18,28 @@ class TerminalRenderer:
         self.console.print(
             f"正方先手，最多 [bold]{max_rounds}[/bold] 个完整轮回；无人认输则由裁判裁决。"
         )
+
+    def emit(self, event: DebateEvent) -> None:
+        if event.kind is EventKind.THINKING_STARTED:
+            self.begin_generation(event.role, event.round_number)
+        elif event.kind is EventKind.SPEECH_STARTED:
+            self.begin_public_output(
+                event.role,
+                event.round_number,
+                float(event.data["thinking_seconds"]),
+            )
+        elif event.kind is EventKind.CONTENT_DELTA:
+            self.write_public(str(event.data["text"]))
+        elif event.kind is EventKind.SPEECH_FINISHED:
+            self.finish_public_output()
+        elif event.kind is EventKind.GENERATION_FAILED:
+            self.generation_failed()
+        elif event.kind is EventKind.RETRYING:
+            self.show_retry(
+                event.role,
+                int(event.data["attempt"]),
+                int(event.data["total_attempts"]),
+            )
 
     def begin_generation(self, role: Role, round_number: int | None) -> None:
         self._speaking = False

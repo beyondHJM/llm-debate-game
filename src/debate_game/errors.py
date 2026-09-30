@@ -12,3 +12,7 @@ class ModelAPIError(DebateError):
 
 class StreamProtocolError(DebateError):
     """Raised when an SSE or debate control protocol is invalid."""
+
+
+class DebateCancelled(DebateError):
+    """Raised when a running debate is cancelled by its user."""

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>AI 辩论场</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">LLM DEBATE GAME</p>
+          <h1>AI 辩论场</h1>
+          <p class="subtitle">同一套辩论逻辑，现在以实时气泡对话呈现。</p>
+        </div>
+        <div id="connectionBadge" class="connection-badge" data-state="idle">
+          <span class="status-dot"></span>
+          <span id="connectionText">等待开始</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-panel" aria-labelledby="setupTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">NEW DEBATE</p>
+              <h2 id="setupTitle">设置辩题</h2>
+            </div>
+            <label class="round-field">
+              <span>最大轮数</span>
+              <input id="maxRounds" type="number" min="1" max="50" value="5">
+            </label>
+          </div>
+          <form id="debateForm">
+            <label class="sr-only" for="motion">辩题</label>
+            <textarea
+              id="motion"
+              maxlength="2000"
+              required
+              placeholder="输入一个值得认真交锋的辩题……"
+            ></textarea>
+            <div class="form-actions">
+              <p id="formMessage" class="form-message" role="status"></p>
+              <div class="button-row">
+                <button id="cancelButton" class="button secondary" type="button" disabled>
+                  停止对局
+                </button>
+                <button id="startButton" class="button primary" type="submit">
+                  开始辩论
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <section id="arena" class="arena" aria-live="polite" aria-label="辩论内容">
+          <div id="emptyState" class="empty-state">
+            <div class="empty-icon">◌</div>
+            <h2>辩论尚未开始</h2>
+            <p>提交辩题后，正方先发言，双方依次交锋，最终由裁判裁决。</p>
+          </div>
+          <div id="motionCard" class="motion-card hidden">
+            <span>本场辩题</span>
+            <strong id="motionText"></strong>
+            <small id="roundText"></small>
+          </div>
+          <div id="timeline" class="timeline"></div>
+          <section id="resultCard" class="result-card hidden" aria-labelledby="resultTitle">
+            <p class="section-kicker">FINAL RESULT</p>
+            <h2 id="resultTitle">辩论结束</h2>
+            <p id="resultWinner" class="result-winner"></p>
+            <p id="resultMeta" class="result-meta"></p>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <template id="bubbleTemplate">
+      <article class="turn">
+        <div class="avatar" aria-hidden="true"></div>
+        <div class="bubble-wrap">
+          <div class="speaker-line">
+            <strong class="speaker"></strong>
+            <span class="round-label"></span>
+          </div>
+          <div class="bubble">
+            <div class="thinking">
+              <span class="thinking-dots"><i></i><i></i><i></i></span>
+              <span class="thinking-label">思考中…</span>
+            </div>
+            <div class="speech"></div>
+          </div>
+          <div class="turn-meta"></div>
+        </div>
+      </article>
+    </template>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
