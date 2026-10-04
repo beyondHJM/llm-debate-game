@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
@@ -18,6 +19,8 @@ class AgentConfig:
     connect_timeout: float
     read_timeout: float
     retries: int
+    chat_template_kwargs: dict[str, Any] = field(default_factory=dict)
+    repetition_penalty: float | None = None
 
 
 class AgentConfigDocument(BaseModel):
@@ -33,6 +36,12 @@ class AgentConfigDocument(BaseModel):
     connect_timeout: float = Field(default=10.0, gt=0)
     read_timeout: float = Field(default=180.0, gt=0)
     retries: int = Field(default=1, ge=0, le=5)
+    # 透传给模型服务的 chat template 参数，例如 {"enable_thinking": true}。
+    # Qwen3.5 系列小模型的模板默认关闭思考（预填 `<think></think>`），
+    # 会让正文落在 reasoning_content 里、content 为空，这里显式开启即可。
+    chat_template_kwargs: dict[str, Any] = Field(default_factory=dict)
+    # 重复惩罚，压制小模型思考阶段的复读/收不住（0 表示不启用，常用 1.1~1.2）。
+    repetition_penalty: float | None = Field(default=None, gt=0)
 
     @field_validator("api_base")
     @classmethod
@@ -60,6 +69,8 @@ class AgentConfigDocument(BaseModel):
             connect_timeout=self.connect_timeout,
             read_timeout=self.read_timeout,
             retries=self.retries,
+            chat_template_kwargs=dict(self.chat_template_kwargs),
+            repetition_penalty=self.repetition_penalty,
         )
 
 

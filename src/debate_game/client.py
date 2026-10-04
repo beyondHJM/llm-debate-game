@@ -42,6 +42,10 @@ def build_chat_request(
     }
     if config.max_tokens is not None:
         request["max_tokens"] = config.max_tokens
+    if config.chat_template_kwargs:
+        request["chat_template_kwargs"] = dict(config.chat_template_kwargs)
+    if config.repetition_penalty is not None:
+        request["repetition_penalty"] = config.repetition_penalty
     return request
 
 
