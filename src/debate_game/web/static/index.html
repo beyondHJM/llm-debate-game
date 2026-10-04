@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>AI 辩论场</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=token-rate-3">
   </head>
   <body>
     <div class="page-shell">
@@ -86,12 +86,15 @@
               <strong class="speaker"></strong>
               <span class="round-label"></span>
             </div>
-            <button
-              class="reasoning-toggle"
-              type="button"
-              aria-expanded="false"
-              disabled
-            >思考中…</button>
+            <div class="turn-stats">
+              <span class="speech-rate token-rate">等待输出…</span>
+              <button
+                class="reasoning-toggle"
+                type="button"
+                aria-expanded="false"
+                disabled
+              >思考中…</button>
+            </div>
           </div>
           <div class="bubble">
             <div class="thinking">
@@ -99,7 +102,10 @@
               <span class="thinking-label">思考中…</span>
             </div>
             <div class="reasoning-panel hidden">
-              <div class="reasoning-heading">模型思考</div>
+              <div class="reasoning-heading">
+                <span>模型思考</span>
+                <span class="reasoning-rate token-rate">测速中…</span>
+              </div>
               <div class="reasoning-content markdown-body"></div>
             </div>
             <div class="speech markdown-body"></div>
@@ -109,6 +115,6 @@
       </article>
     </template>
 
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=token-rate-2"></script>
   </body>
 </html>

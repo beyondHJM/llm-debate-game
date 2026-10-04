@@ -119,6 +119,25 @@ function makeReasoningAvailable(turn) {
   toggle.textContent = panel.classList.contains("hidden") ? "查看思考" : "收起思考";
 }
 
+function formatTokenRate(rate, tokenCount) {
+  if (Number(tokenCount) < 2 || !Number.isFinite(Number(rate))) return "测速中…";
+  return `${Number(rate).toFixed(1)} token/s`;
+}
+
+function updateReasoningRate(turn, data) {
+  turn.querySelector(".reasoning-rate").textContent =
+    formatTokenRate(data.reasoning_token_rate ?? data.token_rate,
+      data.reasoning_token_count ?? data.token_count);
+}
+
+function updateSpeechRate(turn, data, prefix) {
+  const thinking = turn.dataset.thinkingSeconds;
+  const rate = formatTokenRate(data.token_rate, data.token_count);
+  turn.querySelector(".speech-rate").textContent = `${prefix} ${rate}`;
+  turn.querySelector(".turn-meta").textContent =
+    `${thinking ? `思考 ${thinking} 秒 · ` : ""}${prefix} ${rate}`;
+}
+
 function finishTerminal(state, statusText) {
   terminal = true;
   setRunning(false);
@@ -147,6 +166,9 @@ function handleEvent(name, data) {
     reasoningToggle.setAttribute("aria-expanded", "false");
     turn.querySelector(".reasoning-panel").classList.add("hidden");
     turn.querySelector(".reasoning-content").replaceChildren();
+    turn.querySelector(".reasoning-rate").textContent = "测速中…";
+    turn.querySelector(".speech-rate").textContent = "等待输出…";
+    delete turn.dataset.thinkingSeconds;
     turn.querySelector(".thinking-label").textContent =
       data.role === "judge" ? "正在评议全部交锋…" : "正在组织论点…";
     return;
@@ -156,6 +178,7 @@ function handleEvent(name, data) {
     const shouldFollow = isNearPageBottom();
     const turn = ensureBubble(data.role, data.round, shouldFollow);
     makeReasoningAvailable(turn);
+    updateReasoningRate(turn, data);
     if (data.html) {
       turn.querySelector(".reasoning-content").innerHTML = data.html;
       scheduleScroll(turn, shouldFollow);
@@ -172,12 +195,15 @@ function handleEvent(name, data) {
     if (data.reasoning_html) {
       makeReasoningAvailable(turn);
       turn.querySelector(".reasoning-content").innerHTML = data.reasoning_html;
+      updateReasoningRate(turn, data);
     } else {
       turn.querySelector(".reasoning-toggle").disabled = true;
       turn.querySelector(".reasoning-toggle").textContent = "无思考";
     }
+    turn.dataset.thinkingSeconds = Number(data.thinking_seconds).toFixed(1);
+    turn.querySelector(".speech-rate").textContent = "输出 测速中…";
     turn.querySelector(".turn-meta").textContent =
-      `思考 ${Number(data.thinking_seconds).toFixed(1)} 秒`;
+      `思考 ${turn.dataset.thinkingSeconds} 秒 · 等待正式输出…`;
     scheduleScroll(turn, shouldFollow);
     return;
   }
@@ -185,6 +211,7 @@ function handleEvent(name, data) {
   if (name === "content_delta") {
     const shouldFollow = isNearPageBottom();
     const turn = ensureBubble(data.role, data.round, shouldFollow);
+    updateSpeechRate(turn, data, "输出");
     if (data.html) {
       turn.querySelector(".speech").innerHTML = data.html;
       scheduleScroll(turn, shouldFollow);
@@ -196,10 +223,13 @@ function handleEvent(name, data) {
     const shouldFollow = isNearPageBottom();
     const turn = ensureBubble(data.role, data.round, shouldFollow);
     if (data.html) turn.querySelector(".speech").innerHTML = data.html;
+    updateReasoningRate(turn, data);
     turn.classList.remove("speaking", "thinking-active");
     turn.classList.add("complete");
+    const finalRate = formatTokenRate(data.token_rate, data.token_count);
+    turn.querySelector(".speech-rate").textContent = `输出 ${finalRate}`;
     turn.querySelector(".turn-meta").textContent =
-      `完成于 ${Number(data.elapsed_seconds).toFixed(1)} 秒`;
+      `完成于 ${Number(data.elapsed_seconds).toFixed(1)} 秒 · 输出 ${finalRate}`;
     scheduleScroll(turn, shouldFollow);
     return;
   }

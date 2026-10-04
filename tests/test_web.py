@@ -36,6 +36,9 @@ def test_health_and_index_are_served(tmp_path: Path) -> None:
     assert index.status_code == 200
     assert "AI 辩论场" in index.text
     assert "reasoning-toggle" in index.text
+    assert "reasoning-rate" in index.text
+    assert "speech-rate" in index.text
+    assert "app.js?v=token-rate-2" in index.text
     assert "markdown-body" in index.text
 
 
@@ -87,7 +90,8 @@ def test_terminal_event_and_status_are_observed_together() -> None:
 
 def test_web_sink_renders_reasoning_and_speech_markdown_safely() -> None:
     session = DebateSession("motion", 5)
-    sink = SessionEventSink(session)
+    times = iter((10.0, 10.5, 11.0, 11.25))
+    sink = SessionEventSink(session, clock=lambda: next(times))
     sink.emit(DebateEvent(EventKind.THINKING_STARTED, Role.PRO, 1))
     sink.emit(
         DebateEvent(
@@ -98,16 +102,29 @@ def test_web_sink_renders_reasoning_and_speech_markdown_safely() -> None:
         )
     )
     sink.emit(
+        DebateEvent(EventKind.REASONING_DELTA, Role.PRO, 1, {"text": "\n\nStep two"})
+    )
+    sink.emit(DebateEvent(EventKind.SPEECH_STARTED, Role.PRO, 1))
+    sink.emit(
         DebateEvent(EventKind.CONTENT_DELTA, Role.PRO, 1, {"text": "**Claim**"})
     )
+    sink.emit(DebateEvent(EventKind.CONTENT_DELTA, Role.PRO, 1, {"text": " continued"}))
     sink.emit(DebateEvent(EventKind.SPEECH_FINISHED, Role.PRO, 1))
 
     events, _ = session.wait_after(0, 0)
-    reasoning = next(event for event in events if event.name == "reasoning_delta")
-    content = next(event for event in events if event.name == "content_delta")
+    reasoning = [event for event in events if event.name == "reasoning_delta"][-1]
+    content = [event for event in events if event.name == "content_delta"][-1]
+    started = next(event for event in events if event.name == "speech_started")
     finished = next(event for event in events if event.name == "speech_finished")
 
     assert "<h1>Plan</h1>" in reasoning.data["html"]
     assert "<script>" not in reasoning.data["html"]
+    assert reasoning.data["token_count"] == 2
+    assert reasoning.data["token_rate"] == 2.0
+    assert started.data["reasoning_token_rate"] == 2.0
     assert "<strong>Claim</strong>" in content.data["html"]
+    assert content.data["token_count"] == 2
+    assert content.data["token_rate"] == 4.0
     assert finished.data["html"] == content.data["html"]
+    assert finished.data["token_rate"] == 4.0
+    assert finished.data["reasoning_token_rate"] == 2.0

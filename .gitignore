@@ -10,4 +10,5 @@ __pycache__/
 .ruff_cache/
 dist/
 runs/*.jsonl
+runs/*.log
 !runs/.gitkeep

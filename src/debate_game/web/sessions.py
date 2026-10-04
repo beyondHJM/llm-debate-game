@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,22 @@ from debate_game.transcript import JsonlRecorder
 TERMINAL_STATUSES = frozenset({"finished", "failed", "cancelled"})
 ACTIVE_STATUSES = frozenset({"pending", "running", "cancelling"})
 MARKDOWN_RENDER_INTERVAL_SECONDS = 0.08
+
+
+@dataclass(slots=True)
+class _TokenRateTracker:
+    first_token_at: float | None = None
+    token_count: int = 0
+    token_rate: float | None = None
+
+    def observe(self, now: float) -> None:
+        self.token_count += 1
+        if self.first_token_at is None:
+            self.first_token_at = now
+            return
+        elapsed = now - self.first_token_at
+        if elapsed > 0:
+            self.token_rate = (self.token_count - 1) / elapsed
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,11 +164,17 @@ class DebateSession:
 
 
 class SessionEventSink(EventSink):
-    def __init__(self, session: DebateSession) -> None:
+    def __init__(
+        self,
+        session: DebateSession,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._session = session
         self._markdown = create_markdown_renderer()
+        self._clock = clock
         self._buffers: dict[tuple[Role, int | None, str], list[str]] = {}
         self._last_rendered_at: dict[tuple[Role, int | None, str], float] = {}
+        self._rates: dict[tuple[Role, int | None, str], _TokenRateTracker] = {}
 
     def emit(self, event: DebateEvent) -> None:
         payload = event.as_dict()
@@ -161,19 +184,34 @@ class SessionEventSink(EventSink):
         if event.kind is EventKind.THINKING_STARTED:
             self._buffers[speech_key] = []
             self._buffers[reasoning_key] = []
+            self._rates[speech_key] = _TokenRateTracker()
+            self._rates[reasoning_key] = _TokenRateTracker()
             self._last_rendered_at.pop(speech_key, None)
             self._last_rendered_at.pop(reasoning_key, None)
         elif event.kind is EventKind.REASONING_DELTA:
-            self._append_markdown(reasoning_key, str(event.data.get("text", "")), payload)
+            self._append_markdown(
+                reasoning_key,
+                str(event.data.get("text", "")),
+                payload,
+                self._clock(),
+            )
         elif event.kind is EventKind.CONTENT_DELTA:
-            self._append_markdown(speech_key, str(event.data.get("text", "")), payload)
+            self._append_markdown(
+                speech_key,
+                str(event.data.get("text", "")),
+                payload,
+                self._clock(),
+            )
         elif event.kind is EventKind.SPEECH_STARTED:
             reasoning = "".join(self._buffers.get(reasoning_key, ()))
             if reasoning:
                 payload["reasoning_html"] = self._markdown.render(reasoning)
+            self._add_rate(payload, reasoning_key, "reasoning_")
         elif event.kind is EventKind.SPEECH_FINISHED:
             speech = "".join(self._buffers.get(speech_key, ()))
             payload["html"] = self._markdown.render(speech)
+            self._add_rate(payload, speech_key)
+            self._add_rate(payload, reasoning_key, "reasoning_")
 
         self._session.publish(event.kind.value, **payload)
 
@@ -182,14 +220,31 @@ class SessionEventSink(EventSink):
         key: tuple[Role, int | None, str],
         text: str,
         payload: dict[str, Any],
+        now: float,
     ) -> None:
         parts = self._buffers.setdefault(key, [])
         parts.append(text)
-        now = time.monotonic()
+        rate = self._rates.setdefault(key, _TokenRateTracker())
+        rate.observe(now)
+        self._add_rate(payload, key)
         last_rendered = self._last_rendered_at.get(key)
         if last_rendered is None or now - last_rendered >= MARKDOWN_RENDER_INTERVAL_SECONDS:
             payload["html"] = self._markdown.render("".join(parts))
             self._last_rendered_at[key] = now
+
+    def _add_rate(
+        self,
+        payload: dict[str, Any],
+        key: tuple[Role, int | None, str],
+        prefix: str = "",
+    ) -> None:
+        rate = self._rates.get(key)
+        if rate is None:
+            return
+        payload[f"{prefix}token_count"] = rate.token_count
+        payload[f"{prefix}token_rate"] = (
+            round(rate.token_rate, 2) if rate.token_rate is not None else None
+        )
 
 
 class SessionCapacityError(Exception):
